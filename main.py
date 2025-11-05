@@ -223,8 +223,10 @@ async def process_pdf(
     document_type: str = Form(default="generic", description="Tipo: invoice, cv, generic"),
     req: Request = None
 ):
-    # Rate limit por IP
-    check_rate_limit(req.client.host if req and req.client else "unknown")
+    # Rate limit por IP (compatible con proxies)
+    client_ip = req.headers.get("x-forwarded-for", (req.client.host if req and req.client else "unknown"))
+    client_ip = client_ip.split(",")[0].strip()
+    check_rate_limit(client_ip)
 
     """
     Procesa un PDF y extrae datos estructurados.
@@ -283,8 +285,10 @@ async def process_text(
     document_type: str = Form(default="generic"),
     req: Request = None
 ):
-    # Rate limit por IP
-    check_rate_limit(req.client.host if req and req.client else "unknown")
+    # Rate limit por IP (compatible con proxies)
+    client_ip = req.headers.get("x-forwarded-for", (req.client.host if req and req.client else "unknown"))
+    client_ip = client_ip.split(",")[0].strip()
+    check_rate_limit(client_ip)
 
     """
     Procesa texto directo (sin PDF).
@@ -309,9 +313,11 @@ async def process_text(
 @app.get("/templates", dependencies=[Depends(verify_token)])
 def get_templates(req: Request = None):
     """Muestra las plantillas de extracción disponibles"""
-    # Rate limit por IP
-    if req and req.client:
-        check_rate_limit(req.client.host)
+    # Rate limit por IP (compatible con proxies)
+    if req:
+        client_ip = req.headers.get("x-forwarded-for", (req.client.host if req and req.client else "unknown"))
+        client_ip = client_ip.split(",")[0].strip()
+        check_rate_limit(client_ip)
     return {
         "available_types": list(EXTRACTION_PROMPTS.keys()),
         "templates": {
@@ -328,4 +334,5 @@ def health_check():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8001)
+    port = int(os.getenv("PORT", "8001"))
+    uvicorn.run(app, host="0.0.0.0", port=port)
