@@ -209,7 +209,7 @@ def root():
         "developer": "Jorge Lago Campos"
     }
 
-@app.post("/process/pdf", response_model=ProcessResponse, dependencies=[Depends(verify_token)])
+@app.post("/process/pdf", response_model=ProcessResponse, dependencies=[Depends(verify_internal_token)])
 async def process_pdf(
     file: UploadFile = File(...),
     document_type: str = Form(default="generic", description="Tipo: invoice, cv, generic"),
@@ -312,9 +312,7 @@ def get_templates(req: Request = None):
         check_rate_limit(client_ip)
     return {
         "available_types": list(EXTRACTION_PROMPTS.keys()),
-        "templates": {
-            k: v[:200] + "..." for k, v in EXTRACTION_PROMPTS.items()
-        }
+        "templates": {k: v[:200] + "..." for k, v in EXTRACTION_PROMPTS.items()}
     }
 
 @app.get("/health")
@@ -334,6 +332,7 @@ async def block_token_in_query(request: Request, call_next):
 
 # Dependencia: valida internamente que el token exista
 def verify_internal_token():
+    # No aceptar token desde el cliente: solo validación interna
     if not API_TOKEN:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="No autorizado")
     return True
