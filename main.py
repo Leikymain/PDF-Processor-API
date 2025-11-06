@@ -219,16 +219,22 @@ async def block_token_in_query(request: Request, call_next):
 def custom_openapi():
     if app.openapi_schema:
         return app.openapi_schema
+
     schema = get_openapi(
         title=app.title,
         version=app.version,
         description=app.description,
         routes=app.routes,
     )
-    schema.pop("components", None)
+
+    # Eliminar solo definiciones de seguridad, no los schemas
+    if "components" in schema:
+        schema["components"].pop("securitySchemes", None)
     schema.pop("security", None)
+
     app.openapi_schema = schema
     return app.openapi_schema
+
 
 app.openapi = custom_openapi
 
