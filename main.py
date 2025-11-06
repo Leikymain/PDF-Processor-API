@@ -333,13 +333,11 @@ def health_check():
     }
 
 # módulo principal (top-level)
-class TokenInQueryMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next):
-        if "token" in request.query_params:
-            return JSONResponse(status_code=401, content={"detail": "No autorizado"})
-        return await call_next(request)
-
-app.add_middleware(TokenInQueryMiddleware)
+@app.middleware("http")
+async def block_token_in_query(request: Request, call_next):
+    if "token" in request.query_params:
+        return JSONResponse(status_code=401, content={"detail": "No autorizado"})
+    return await call_next(request)
 
 if __name__ == "__main__":
     import uvicorn
