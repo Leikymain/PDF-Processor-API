@@ -34,15 +34,15 @@ API_TOKEN = os.getenv("API_TOKEN")
 security = HTTPBearer(auto_error=False)
 
 def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
-    if credentials is None:
+    if credentials is None or not credentials.credentials:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Falta el header Authorization: Bearer <token>"
+            detail="No autorizado"
         )
     if credentials.credentials != API_TOKEN:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token inválido o no autorizado"
+            detail="No autorizado"
         )
     return True
 
@@ -167,7 +167,7 @@ def process_with_ai(text: str, document_type: str) -> tuple[Dict[str, Any], int]
     
     api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
-        raise HTTPException(status_code=500, detail="API key no configurada")
+        raise HTTPException(status_code=500, detail="Error interno")
     
     client = anthropic.Anthropic(api_key=api_key)
     
@@ -331,6 +331,15 @@ def health_check():
         "status": "healthy",
         "timestamp": datetime.now().isoformat()
     }
+
+# módulo principal (top-level)
+class TokenInQueryMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        if "token" in request.query_params:
+            return JSONResponse(status_code=401, content={"detail": "No autorizado"})
+        return await call_next(request)
+
+app.add_middleware(TokenInQueryMiddleware)
 
 if __name__ == "__main__":
     import uvicorn
