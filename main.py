@@ -28,18 +28,19 @@ app.add_middleware(
 )
 
 # ============== Auth por Bearer ==============
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-
+# Quita el uso de HTTPBearer para que Swagger no muestre 'Authorize'
 API_TOKEN = os.getenv("API_TOKEN")
-security = HTTPBearer(auto_error=False)
 
-def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
-    if credentials is None or not credentials.credentials:
+def verify_token(request: Request):
+    # Leer header Authorization manualmente
+    auth = request.headers.get("authorization", "")
+    if not auth.startswith("Bearer "):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="No autorizado"
         )
-    if credentials.credentials != API_TOKEN:
+    token = auth.split(" ", 1)[1].strip()
+    if not API_TOKEN or token != API_TOKEN:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="No autorizado"
@@ -178,16 +179,15 @@ def process_with_ai(text: str, document_type: str) -> tuple[Dict[str, Any], int]
         response = client.messages.create(
             model="claude-haiku-4-5-20251001",
             max_tokens=2048,
-            temperature=0.2,  # Más bajo para mayor precisión
+            temperature=0.2,
             messages=[
                 {
                     "role": "user",
-                    "content": f"{extraction_prompt}\n\nTexto del documento:\n\n{text[:4000]}"  # Limitar a primeros 4000 chars
+                    "content": f"{extraction_prompt}\n\nTexto del documento:\n\n{text[:4000]}"
                 }
             ]
         )
-        
-        # Parsear JSON de la respuesta
+        tokens_used = response.usage.input_tokens + response.usage.output_tokens
         response_text = response.content[0].text
         
         # Intentar extraer JSON si viene con markdown
@@ -197,15 +197,11 @@ def process_with_ai(text: str, document_type: str) -> tuple[Dict[str, Any], int]
             response_text = response_text.split("```")[1].split("```")[0]
         
         extracted_data = json.loads(response_text.strip())
-        tokens_used = response.usage.input_tokens + response.usage.output_tokens
-        
         return extracted_data, tokens_used
-        
     except json.JSONDecodeError:
-        # Si falla el parsing, devolver texto plano
-        return {"raw_response": response_text, "warning": "No se pudo parsear como JSON"}, tokens_used
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error en procesamiento IA: {str(e)}")
+        return {"raw_response": "Formato no válido", "warning": "No se pudo parsear como JSON"}, tokens_used
+    except Exception:
+        raise HTTPException(status_code=500, detail="Error interno")
 
 @app.get("/")
 def root():
@@ -223,7 +219,7 @@ async def process_pdf(
     document_type: str = Form(default="generic", description="Tipo: invoice, cv, generic"),
     req: Request = None
 ):
-    # Rate limit por IP (compatible con proxies)
+    # Rate limit por IP considerando proxies
     client_ip = req.headers.get("x-forwarded-for", (req.client.host if req and req.client else "unknown"))
     client_ip = client_ip.split(",")[0].strip()
     check_rate_limit(client_ip)
@@ -285,7 +281,7 @@ async def process_text(
     document_type: str = Form(default="generic"),
     req: Request = None
 ):
-    # Rate limit por IP (compatible con proxies)
+    # Rate limit por IP considerando proxies
     client_ip = req.headers.get("x-forwarded-for", (req.client.host if req and req.client else "unknown"))
     client_ip = client_ip.split(",")[0].strip()
     check_rate_limit(client_ip)
@@ -313,7 +309,7 @@ async def process_text(
 @app.get("/templates", dependencies=[Depends(verify_token)])
 def get_templates(req: Request = None):
     """Muestra las plantillas de extracción disponibles"""
-    # Rate limit por IP (compatible con proxies)
+    # Rate limit por IP considerando proxies
     if req:
         client_ip = req.headers.get("x-forwarded-for", (req.client.host if req and req.client else "unknown"))
         client_ip = client_ip.split(",")[0].strip()
@@ -333,6 +329,7 @@ def health_check():
     }
 
 # módulo principal (top-level)
+# Bloquear intento de pasar 'token' por query params
 @app.middleware("http")
 async def block_token_in_query(request: Request, call_next):
     if "token" in request.query_params:
