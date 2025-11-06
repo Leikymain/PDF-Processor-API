@@ -13,11 +13,6 @@ import time
 
 load_dotenv()
 
-# Carga de token interno desde entorno
-API_TOKEN = os.getenv("API_TOKEN")
-if not API_TOKEN:
-    print("⚠️ Advertencia: API_TOKEN no configurado")
-
 app = FastAPI(
     title="AI Document Processor API",
     description="Procesa PDFs, facturas y CVs automáticamente con IA - By Jorge Lago",
@@ -33,22 +28,21 @@ app.add_middleware(
 )
 
 # ============== Auth por Bearer ==============
-# Quita el uso de HTTPBearer para que Swagger no muestre 'Authorize'
-API_TOKEN = os.getenv("API_TOKEN")
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
-def verify_token(request: Request):
-    # Leer header Authorization manualmente
-    auth = request.headers.get("authorization", "")
-    if not auth.startswith("Bearer "):
+API_TOKEN = os.getenv("API_TOKEN")
+security = HTTPBearer(auto_error=False)
+
+def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    if credentials is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="No autorizado"
+            detail="Falta el header Authorization: Bearer <token>"
         )
-    token = auth.split(" ", 1)[1].strip()
-    if not API_TOKEN or token != API_TOKEN:
+    if credentials.credentials != API_TOKEN:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="No autorizado"
+            detail="Token inválido o no autorizado"
         )
     return True
 
@@ -170,34 +164,48 @@ def extract_text_from_pdf(file_bytes: bytes) -> str:
 
 def process_with_ai(text: str, document_type: str) -> tuple[Dict[str, Any], int]:
     """Procesa el texto con Claude y extrae datos estructurados"""
+    
     api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
-        raise HTTPException(status_code=500, detail="Error interno")
-
+        raise HTTPException(status_code=500, detail="API key no configurada")
+    
     client = anthropic.Anthropic(api_key=api_key)
+    
+    # Seleccionar prompt según tipo
     extraction_prompt = EXTRACTION_PROMPTS.get(document_type, EXTRACTION_PROMPTS["generic"])
-
+    
     try:
         response = client.messages.create(
             model="claude-haiku-4-5-20251001",
             max_tokens=2048,
-            temperature=0.2,
-            messages=[{"role": "user","content": f"{extraction_prompt}\n\nTexto del documento:\n\n{text[:4000]}"}]
+            temperature=0.2,  # Más bajo para mayor precisión
+            messages=[
+                {
+                    "role": "user",
+                    "content": f"{extraction_prompt}\n\nTexto del documento:\n\n{text[:4000]}"  # Limitar a primeros 4000 chars
+                }
+            ]
         )
-        tokens_used = response.usage.input_tokens + response.usage.output_tokens
+        
+        # Parsear JSON de la respuesta
         response_text = response.content[0].text
-
+        
+        # Intentar extraer JSON si viene con markdown
         if "```json" in response_text:
             response_text = response_text.split("```json")[1].split("```")[0]
         elif "```" in response_text:
             response_text = response_text.split("```")[1].split("```")[0]
-
+        
         extracted_data = json.loads(response_text.strip())
+        tokens_used = response.usage.input_tokens + response.usage.output_tokens
+        
         return extracted_data, tokens_used
+        
     except json.JSONDecodeError:
-        return {"raw_response": "Formato no válido", "warning": "No se pudo parsear como JSON"}, tokens_used
-    except Exception:
-        raise HTTPException(status_code=500, detail="Error interno")
+        # Si falla el parsing, devolver texto plano
+        return {"raw_response": response_text, "warning": "No se pudo parsear como JSON"}, tokens_used
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error en procesamiento IA: {str(e)}")
 
 @app.get("/")
 def root():
@@ -209,13 +217,13 @@ def root():
         "developer": "Jorge Lago Campos"
     }
 
-@app.post("/process/pdf", response_model=ProcessResponse, dependencies=[Depends(verify_internal_token)])
+@app.post("/process/pdf", response_model=ProcessResponse, dependencies=[Depends(verify_token)])
 async def process_pdf(
     file: UploadFile = File(...),
     document_type: str = Form(default="generic", description="Tipo: invoice, cv, generic"),
     req: Request = None
 ):
-    # Rate limit por IP considerando proxies
+    # Rate limit por IP (compatible con proxies)
     client_ip = req.headers.get("x-forwarded-for", (req.client.host if req and req.client else "unknown"))
     client_ip = client_ip.split(",")[0].strip()
     check_rate_limit(client_ip)
@@ -271,7 +279,7 @@ async def process_pdf(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error procesando documento: {str(e)}")
 
-@app.post("/process/text", dependencies=[Depends(verify_internal_token)])
+@app.post("/process/text", dependencies=[Depends(verify_token)])
 async def process_text(
     text: str = Form(...),
     document_type: str = Form(default="generic"),
@@ -302,7 +310,7 @@ async def process_text(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/templates", dependencies=[Depends(verify_internal_token)])
+@app.get("/templates", dependencies=[Depends(verify_token)])
 def get_templates(req: Request = None):
     """Muestra las plantillas de extracción disponibles"""
     # Rate limit por IP (compatible con proxies)
@@ -312,7 +320,9 @@ def get_templates(req: Request = None):
         check_rate_limit(client_ip)
     return {
         "available_types": list(EXTRACTION_PROMPTS.keys()),
-        "templates": {k: v[:200] + "..." for k, v in EXTRACTION_PROMPTS.items()}
+        "templates": {
+            k: v[:200] + "..." for k, v in EXTRACTION_PROMPTS.items()
+        }
     }
 
 @app.get("/health")
@@ -321,21 +331,6 @@ def health_check():
         "status": "healthy",
         "timestamp": datetime.now().isoformat()
     }
-
-# módulo principal (top-level)
-# Bloquear intento de pasar 'token' por query params
-@app.middleware("http")
-async def block_token_in_query(request: Request, call_next):
-    if "token" in request.query_params:
-        return JSONResponse(status_code=401, content={"detail": "No autorizado"})
-    return await call_next(request)
-
-# Dependencia: valida internamente que el token exista
-def verify_internal_token():
-    # No aceptar token desde el cliente: solo validación interna
-    if not API_TOKEN:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="No autorizado")
-    return True
 
 if __name__ == "__main__":
     import uvicorn
