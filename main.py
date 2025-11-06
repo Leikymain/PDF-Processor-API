@@ -13,6 +13,11 @@ import time
 
 load_dotenv()
 
+# Carga de token interno desde entorno
+API_TOKEN = os.getenv("API_TOKEN")
+if not API_TOKEN:
+    print("⚠️ Advertencia: API_TOKEN no configurado")
+
 app = FastAPI(
     title="AI Document Processor API",
     description="Procesa PDFs, facturas y CVs automáticamente con IA - By Jorge Lago",
@@ -165,37 +170,28 @@ def extract_text_from_pdf(file_bytes: bytes) -> str:
 
 def process_with_ai(text: str, document_type: str) -> tuple[Dict[str, Any], int]:
     """Procesa el texto con Claude y extrae datos estructurados"""
-    
     api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
         raise HTTPException(status_code=500, detail="Error interno")
-    
+
     client = anthropic.Anthropic(api_key=api_key)
-    
-    # Seleccionar prompt según tipo
     extraction_prompt = EXTRACTION_PROMPTS.get(document_type, EXTRACTION_PROMPTS["generic"])
-    
+
     try:
         response = client.messages.create(
             model="claude-haiku-4-5-20251001",
             max_tokens=2048,
             temperature=0.2,
-            messages=[
-                {
-                    "role": "user",
-                    "content": f"{extraction_prompt}\n\nTexto del documento:\n\n{text[:4000]}"
-                }
-            ]
+            messages=[{"role": "user","content": f"{extraction_prompt}\n\nTexto del documento:\n\n{text[:4000]}"}]
         )
         tokens_used = response.usage.input_tokens + response.usage.output_tokens
         response_text = response.content[0].text
-        
-        # Intentar extraer JSON si viene con markdown
+
         if "```json" in response_text:
             response_text = response_text.split("```json")[1].split("```")[0]
         elif "```" in response_text:
             response_text = response_text.split("```")[1].split("```")[0]
-        
+
         extracted_data = json.loads(response_text.strip())
         return extracted_data, tokens_used
     except json.JSONDecodeError:
@@ -275,13 +271,13 @@ async def process_pdf(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error procesando documento: {str(e)}")
 
-@app.post("/process/text", dependencies=[Depends(verify_token)])
+@app.post("/process/text", dependencies=[Depends(verify_internal_token)])
 async def process_text(
     text: str = Form(...),
     document_type: str = Form(default="generic"),
     req: Request = None
 ):
-    # Rate limit por IP considerando proxies
+    # Rate limit por IP (compatible con proxies)
     client_ip = req.headers.get("x-forwarded-for", (req.client.host if req and req.client else "unknown"))
     client_ip = client_ip.split(",")[0].strip()
     check_rate_limit(client_ip)
@@ -306,10 +302,10 @@ async def process_text(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/templates", dependencies=[Depends(verify_token)])
+@app.get("/templates", dependencies=[Depends(verify_internal_token)])
 def get_templates(req: Request = None):
     """Muestra las plantillas de extracción disponibles"""
-    # Rate limit por IP considerando proxies
+    # Rate limit por IP (compatible con proxies)
     if req:
         client_ip = req.headers.get("x-forwarded-for", (req.client.host if req and req.client else "unknown"))
         client_ip = client_ip.split(",")[0].strip()
@@ -335,6 +331,12 @@ async def block_token_in_query(request: Request, call_next):
     if "token" in request.query_params:
         return JSONResponse(status_code=401, content={"detail": "No autorizado"})
     return await call_next(request)
+
+# Dependencia: valida internamente que el token exista
+def verify_internal_token():
+    if not API_TOKEN:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="No autorizado")
+    return True
 
 if __name__ == "__main__":
     import uvicorn
