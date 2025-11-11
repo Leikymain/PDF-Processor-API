@@ -12,19 +12,29 @@ import json
 import time
 from fastapi.responses import JSONResponse
 from fastapi.openapi.utils import get_openapi
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 load_dotenv()
 
 # ===================== Token de entorno =====================
 API_TOKEN = os.getenv("API_TOKEN")
 if not API_TOKEN:
-    print("⚠️ Advertencia: API_TOKEN no configurado en entorno.")
+    raise RuntimeError("API_TOKEN no configurado en entorno.")
 
-# Validación interna del token
-def verify_server_token():
-    """Verifica internamente que exista API_TOKEN configurado."""
-    if not API_TOKEN:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="No autorizado")
+security = HTTPBearer(auto_error=False)
+
+
+def verify_bearer_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    if credentials is None or not credentials.credentials:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Falta el header Authorization: Bearer <token>",
+        )
+    if credentials.scheme.lower() != "bearer" or credentials.credentials != API_TOKEN:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token inválido o no autorizado",
+        )
     return True
 
 # ===================== Inicialización =====================
@@ -33,10 +43,15 @@ app = FastAPI(
     description="Procesa PDFs, facturas y CVs automáticamente con IA - By Jorge Lago",
     version="1.0.0"
 )
+ALLOWED_ORIGINS = [
+    "https://automapymes.com",
+    "https://www.automapymes.com",
+    "https://*.automapymes.com"
+]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -103,8 +118,8 @@ def extract_text_from_pdf(file_bytes: bytes) -> str:
         pdf_reader = PyPDF2.PdfReader(io.BytesIO(file_bytes))
         text = "".join(page.extract_text() + "\n" for page in pdf_reader.pages)
         return text.strip()
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Error al leer PDF: {str(e)}")
+    except Exception:
+        raise HTTPException(status_code=400, detail="Error al leer PDF.")
 
 def process_with_ai(text: str, document_type: str) -> tuple[Dict[str, Any], int]:
     api_key = os.getenv("ANTHROPIC_API_KEY")
@@ -147,13 +162,16 @@ def root():
         "developer": "Jorge Lago Campos"
     }
 
-@app.post("/process/pdf", response_model=ProcessResponse, dependencies=[Depends(verify_server_token)])
+@app.post("/process/pdf", response_model=ProcessResponse, dependencies=[Depends(verify_bearer_token)])
 async def process_pdf(
     file: UploadFile = File(...),
     document_type: str = Form(default="generic"),
     req: Request = None
 ):
-    client_ip = req.headers.get("x-forwarded-for", (req.client.host if req and req.client else "unknown")).split(",")[0]
+    client_ip = "unknown"
+    if req:
+        forwarded = req.headers.get("x-forwarded-for")
+        client_ip = (forwarded or (req.client.host if req.client else "unknown")).split(",")[0]
     check_rate_limit(client_ip)
 
     if not file.filename.endswith(".pdf"):
@@ -178,9 +196,12 @@ async def process_pdf(
         confidence=confidence
     )
 
-@app.post("/process/text", dependencies=[Depends(verify_server_token)])
+@app.post("/process/text", dependencies=[Depends(verify_bearer_token)])
 async def process_text(text: str = Form(...), document_type: str = Form(default="generic"), req: Request = None):
-    client_ip = req.headers.get("x-forwarded-for", (req.client.host if req and req.client else "unknown")).split(",")[0]
+    client_ip = "unknown"
+    if req:
+        forwarded = req.headers.get("x-forwarded-for")
+        client_ip = (forwarded or (req.client.host if req.client else "unknown")).split(",")[0]
     check_rate_limit(client_ip)
 
     if len(text) < 50:
@@ -194,10 +215,11 @@ async def process_text(text: str = Form(...), document_type: str = Form(default=
         "timestamp": datetime.now().isoformat()
     }
 
-@app.get("/templates", dependencies=[Depends(verify_server_token)])
+@app.get("/templates", dependencies=[Depends(verify_bearer_token)])
 def get_templates(req: Request = None):
     if req:
-        client_ip = req.headers.get("x-forwarded-for", (req.client.host if req and req.client else "unknown")).split(",")[0]
+        forwarded = req.headers.get("x-forwarded-for")
+        client_ip = (forwarded or (req.client.host if req.client else "unknown")).split(",")[0]
         check_rate_limit(client_ip)
     return {
         "available_types": list(EXTRACTION_PROMPTS.keys()),
