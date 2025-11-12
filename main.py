@@ -13,6 +13,8 @@ import time
 from fastapi.responses import JSONResponse
 from fastapi.openapi.utils import get_openapi
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from auth_middleware import require_auth
+from fastapi import Depends
 
 load_dotenv()
 
@@ -166,7 +168,8 @@ def root():
 async def process_pdf(
     file: UploadFile = File(...),
     document_type: str = Form(default="generic"),
-    req: Request = None
+    req: Request = None,
+    token: str = Depends(require_auth)
 ):
     client_ip = "unknown"
     if req:
@@ -197,7 +200,7 @@ async def process_pdf(
     )
 
 @app.post("/process/text", dependencies=[Depends(verify_bearer_token)])
-async def process_text(text: str = Form(...), document_type: str = Form(default="generic"), req: Request = None):
+async def process_text(text: str = Form(...), document_type: str = Form(default="generic"), req: Request = None, token: str = Depends(require_auth)):
     client_ip = "unknown"
     if req:
         forwarded = req.headers.get("x-forwarded-for")
