@@ -1,20 +1,18 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Depends, Request, status
+from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Request, status, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse, HTMLResponse, JSONResponse
 from pydantic import BaseModel
 from typing import Dict, Any
-import anthropic
-import os
 from datetime import datetime
 from dotenv import load_dotenv
+import anthropic
+import os
+import time
 import PyPDF2
 import io
 import json
-import time
-from fastapi.responses import JSONResponse
-from fastapi.openapi.utils import get_openapi
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from auth_middleware import require_auth
-from fastapi import Depends
+from fastapi.openapi.utils import get_openapi
 
 load_dotenv()
 
@@ -23,21 +21,12 @@ API_TOKEN = os.getenv("API_TOKEN")
 if not API_TOKEN:
     raise RuntimeError("API_TOKEN no configurado en entorno.")
 
-security = HTTPBearer(auto_error=False)
-
-
-def verify_bearer_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
-    if credentials is None or not credentials.credentials:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Falta el header Authorization: Bearer <token>",
-        )
-    if credentials.scheme.lower() != "bearer" or credentials.credentials != API_TOKEN:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token inválido o no autorizado",
-        )
-    return True
+# ===================== Seguridad interna =====================
+def verify_bearer_token():
+    """Verificación interna de token del servidor. No se requiere token del cliente."""
+    if API_TOKEN is None:
+        raise HTTPException(status_code=500, detail="Token interno no configurado")
+    return True  # Siempre pasa si API_TOKEN existe
 
 # ===================== Inicialización =====================
 app = FastAPI(
@@ -45,6 +34,7 @@ app = FastAPI(
     description="Procesa PDFs, facturas y CVs automáticamente con IA - By Jorge Lago",
     version="1.0.0"
 )
+
 ALLOWED_ORIGINS = [
     "https://automapymes.com",
     "https://www.automapymes.com",
@@ -97,7 +87,6 @@ EXTRACTION_PROMPTS = {
   "subtotal": number,"iva": number,"total": number
 }
 Devuelve SOLO el JSON.""",
-
     "cv": """Analiza este CV y extrae la siguiente información en formato JSON:
 {
   "datos_personales": {"nombre": "string","email": "string","telefono": "string","linkedin": "string","ubicacion": "string"},
@@ -109,7 +98,6 @@ Devuelve SOLO el JSON.""",
   "puntuacion_match": {"experiencia_años": number,"nivel_tecnico": "junior/mid/senior","areas_destacadas": ["string"]}
 }
 Devuelve SOLO el JSON.""",
-
     "generic": """Analiza este documento y extrae la información más relevante en JSON.
 Incluye tipo de documento, fechas, nombres, cantidades y conceptos principales."""
 }
@@ -154,22 +142,25 @@ def process_with_ai(text: str, document_type: str) -> tuple[Dict[str, Any], int]
         raise HTTPException(status_code=500, detail="Error interno")
 
 # ===================== Rutas =====================
-@app.get("/")
-def root():
-    return {
-        "message": "AI Document Processor API - Activa",
-        "docs": "/docs",
-        "version": "1.0.0",
-        "supported_types": ["invoice", "cv", "generic"],
-        "developer": "Jorge Lago Campos"
-    }
+@app.get("/", include_in_schema=False)
+def root_redirect():
+    return RedirectResponse(url="/demo")
+
+@app.get("/demo", include_in_schema=False)
+def serve_demo():
+    with open("static/demo.html", "r", encoding="utf-8") as f:
+        return HTMLResponse(content=f.read())
+
+@app.get("/auth/check")
+async def auth_check(token: str = Depends(require_auth)):
+    """Verifica si el token en header es válido (para el modal)."""
+    return {"valid": True}
 
 @app.post("/process/pdf", response_model=ProcessResponse, dependencies=[Depends(verify_bearer_token)])
 async def process_pdf(
     file: UploadFile = File(...),
     document_type: str = Form(default="generic"),
-    req: Request = None,
-    token: str = Depends(require_auth)
+    req: Request = None
 ):
     client_ip = "unknown"
     if req:
@@ -200,7 +191,7 @@ async def process_pdf(
     )
 
 @app.post("/process/text", dependencies=[Depends(verify_bearer_token)])
-async def process_text(text: str = Form(...), document_type: str = Form(default="generic"), req: Request = None, token: str = Depends(require_auth)):
+async def process_text(text: str = Form(...), document_type: str = Form(default="generic"), req: Request = None):
     client_ip = "unknown"
     if req:
         forwarded = req.headers.get("x-forwarded-for")
@@ -241,26 +232,16 @@ async def block_token_in_query(request: Request, call_next):
     return await call_next(request)
 
 # ===================== OpenAPI sin Auth =====================
+from fastapi.openapi.utils import get_openapi
 def custom_openapi():
     if app.openapi_schema:
         return app.openapi_schema
-
-    schema = get_openapi(
-        title=app.title,
-        version=app.version,
-        description=app.description,
-        routes=app.routes,
-    )
-
-    # Eliminar solo definiciones de seguridad, no los schemas
+    schema = get_openapi(title=app.title, version=app.version, description=app.description, routes=app.routes)
     if "components" in schema:
         schema["components"].pop("securitySchemes", None)
     schema.pop("security", None)
-
     app.openapi_schema = schema
     return app.openapi_schema
-
-
 app.openapi = custom_openapi
 
 # ===================== Main =====================

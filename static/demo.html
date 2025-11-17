@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <title>API Demo - Token Required</title>
+    <style>
+      body {
+        font-family: system-ui, sans-serif;
+        background: linear-gradient(to bottom right, #eef2ff, #fafaff);
+        height: 100vh;
+        margin: 0;
+        display: grid;
+        place-items: center;
+      }
+
+      #modal {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.45);
+        backdrop-filter: blur(6px);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      #modal-box {
+        background: white;
+        padding: 2rem;
+        border-radius: 20px;
+        width: 90%;
+        max-width: 380px;
+        box-shadow: 0 0 30px rgba(0, 0, 0, 0.1);
+        text-align: center;
+      }
+
+      input {
+        width: 100%;
+        padding: 0.8rem;
+        margin-top: 1rem;
+        border-radius: 10px;
+        border: 2px solid #ddd;
+        font-size: 1rem;
+      }
+
+      button {
+        margin-top: 1rem;
+        width: 100%;
+        padding: 0.9rem;
+        border: none;
+        border-radius: 12px;
+        background: linear-gradient(to right, #6366f1, #8b5cf6);
+        color: white;
+        cursor: pointer;
+        font-size: 1rem;
+        font-weight: bold;
+      }
+
+      #error {
+        margin-top: 1rem;
+        color: red;
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="modal">
+      <div id="modal-box">
+        <h2>Introduce tu token de acceso</h2>
+        <p>Obtén tu token en la landing page</p>
+
+        <input id="token-input" placeholder="Token..." />
+        <button onclick="saveToken()">Continuar</button>
+        <div id="error">Token inválido</div>
+      </div>
+    </div>
+
+    <script>
+      const CHECK_URL = "/auth/check";
+
+      async function saveToken() {
+        const token = document.getElementById("token-input").value.trim();
+        if (!token) return;
+
+        try {
+          // Validar token en backend
+          const res = await fetch(CHECK_URL, {
+            method: "GET",
+            headers: { Authorization: `Bearer ${token}` },
+          });
+
+          if (!res.ok) throw new Error("Token inválido");
+
+          // Guardar token localmente
+          localStorage.setItem("demo_token", token);
+
+          // Guardar temporalmente para inyectar en Swagger
+          sessionStorage.setItem("pending_swagger_token", token);
+
+          // Redirigir a demo/barra2
+          window.location.href = "/docs";
+        } catch (err) {
+          document.getElementById("error").style.display = "block";
+        }
+      }
+
+      // 👇 Este código se ejecuta en /docs (Swagger UI)
+      window.addEventListener("DOMContentLoaded", () => {
+        const token =
+          sessionStorage.getItem("pending_swagger_token") ||
+          localStorage.getItem("demo_token");
+        if (!token) return;
+
+        setTimeout(() => {
+          const authorizeBtn = document.querySelector(".authorize");
+          if (!authorizeBtn) return;
+
+          authorizeBtn.click();
+
+          setTimeout(() => {
+            const input = document.querySelector("input[type='text']");
+            if (input) {
+              input.value = token;
+              input.dispatchEvent(new Event("input", { bubbles: true }));
+            }
+
+            const modalAuthorizeBtn = document.querySelector(
+              ".btn.modal-btn.auth.authorize"
+            );
+            if (modalAuthorizeBtn) modalAuthorizeBtn.click();
+
+            // Limpiar sessionStorage para no repetir
+            sessionStorage.removeItem("pending_swagger_token");
+          }, 500);
+        }, 500);
+      });
+    </script>
+  </body>
+</html>
