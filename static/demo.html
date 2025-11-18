@@ -68,7 +68,6 @@
       <div id="modal-box">
         <h2>Introduce tu token de acceso</h2>
         <p>Obtén tu token en la landing page</p>
-
         <input id="token-input" placeholder="Token..." />
         <button onclick="saveToken()">Continuar</button>
         <div id="error">Token inválido</div>
@@ -94,32 +93,37 @@
           // Guardar token en localStorage
           localStorage.setItem("demo_token", token);
 
-          // Opcional: mostrar mensaje de éxito
-          document.getElementById("error").style.display = "none";
+          // Redirigir a Swagger Docs
+          window.location.href = "/docs";
         } catch (err) {
           document.getElementById("error").style.display = "block";
         }
       }
 
-      // Función para enviar requests a /process/pdf o /process/text con demo_token en FormData
-      async function postWithToken(url, formData) {
-        const token = localStorage.getItem("demo_token");
-        if (!token) throw new Error("Token de demo no encontrado");
-
-        formData.append("demo_token", token);
-
-        const res = await fetch(url, { method: "POST", body: formData });
-        if (!res.ok) {
-          const text = await res.text();
-          throw new Error(`Error ${res.status}: ${text}`);
-        }
-        return res.json();
-      }
-
       // ⚡ Modal siempre visible
       window.addEventListener("DOMContentLoaded", () => {
-        // Siempre mostrar modal, aunque haya token
         document.getElementById("modal").style.display = "flex";
+
+        // Inyección automática del token en Swagger UI
+        const token = localStorage.getItem("demo_token");
+        if (!token) return;
+
+        const interval = setInterval(() => {
+          if (window.ui && window.ui.getSystem) {
+            clearInterval(interval);
+
+            const originalFetch = window.fetch;
+            window.fetch = function (url, options = {}) {
+              options.headers = {
+                ...(options.headers || {}),
+                Authorization: `Bearer ${token}`, // inyecta token automáticamente
+              };
+              return originalFetch(url, options);
+            };
+
+            console.log("Token inyectado automáticamente en Swagger y fetchs!");
+          }
+        }, 200);
       });
     </script>
   </body>
