@@ -157,30 +157,37 @@ async def auth_check(token: str = Depends(require_auth)):
     """Verifica si el token en header es válido (para el modal)."""
     return {"valid": True}
 
+
 @app.post("/process/pdf", response_model=ProcessResponse, dependencies=[Depends(verify_bearer_token)])
 async def process_pdf(
     file: UploadFile = File(...),
     document_type: str = Form(default="generic"),
-    authorization:str = Header(None),
+    demo_token: str = Form(...),   # <-- Token enviado desde frontend
     req: Request = None
 ):
-    token = await require_auth(authorization)
+    # Llamamos a require_auth con el token del form
+    token = await require_auth(demo_token)
+
+    # Identificar cliente para rate limiting
     client_ip = "unknown"
     if req:
         forwarded = req.headers.get("x-forwarded-for")
         client_ip = (forwarded or (req.client.host if req.client else "unknown")).split(",")[0]
     check_rate_limit(client_ip)
 
+    # Validaciones PDF
     if not file.filename.endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Solo se aceptan archivos PDF")
     if document_type not in EXTRACTION_PROMPTS:
         raise HTTPException(status_code=400, detail=f"Tipo no válido. Usa: {list(EXTRACTION_PROMPTS.keys())}")
 
+    # Leer PDF
     file_bytes = await file.read()
     text = extract_text_from_pdf(file_bytes)
     if not text or len(text) < 50:
         raise HTTPException(status_code=400, detail="PDF vacío o ilegible.")
 
+    # Procesar con IA
     extracted_data, tokens_used = process_with_ai(text, document_type)
     confidence = "high" if len(str(extracted_data)) > 200 else "medium"
 
@@ -193,26 +200,38 @@ async def process_pdf(
         confidence=confidence
     )
 
+
 @app.post("/process/text", dependencies=[Depends(verify_bearer_token)])
-async def process_text(text: str = Form(...), document_type: str = Form(default="generic"), authorization:str = Header(None), req: Request = None):
-    token = await require_auth(authorization)
+async def process_text(
+    text: str = Form(...),
+    document_type: str = Form(default="generic"),
+    demo_token: str = Form(...),   # <-- Token enviado desde frontend
+    req: Request = None
+):
+    # Llamamos a require_auth con el token del form
+    token = await require_auth(demo_token)
+
+    # Identificar cliente para rate limiting
     client_ip = "unknown"
     if req:
         forwarded = req.headers.get("x-forwarded-for")
         client_ip = (forwarded or (req.client.host if req.client else "unknown")).split(",")[0]
     check_rate_limit(client_ip)
 
+    # Validación de longitud de texto
     if len(text) < 50:
         raise HTTPException(status_code=400, detail="Texto demasiado corto")
 
+    # Procesar con IA
     extracted_data, tokens_used = process_with_ai(text, document_type)
+
     return {
         "document_type": document_type,
         "extracted_data": extracted_data,
         "tokens_used": tokens_used,
         "timestamp": datetime.now().isoformat()
     }
-
+    
 @app.get("/templates", dependencies=[Depends(verify_bearer_token)])
 def get_templates(req: Request = None):
     if req:

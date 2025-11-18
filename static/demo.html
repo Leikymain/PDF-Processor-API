@@ -91,39 +91,35 @@
 
           if (!res.ok) throw new Error("Token inválido");
 
-          // Guardar token localmente
+          // Guardar token en localStorage
           localStorage.setItem("demo_token", token);
 
-          // Redirigir a Swagger Docs
-          window.location.href = "/docs";
+          // Opcional: mostrar mensaje de éxito
+          document.getElementById("error").style.display = "none";
         } catch (err) {
           document.getElementById("error").style.display = "block";
         }
       }
 
-      // ⚡ Inyección automática del token en Swagger
-      window.addEventListener("DOMContentLoaded", () => {
+      // Función para enviar requests a /process/pdf o /process/text con demo_token en FormData
+      async function postWithToken(url, formData) {
         const token = localStorage.getItem("demo_token");
-        if (!token) return;
+        if (!token) throw new Error("Token de demo no encontrado");
 
-        // Esperamos a que Swagger UI esté inicializado
-        const interval = setInterval(() => {
-          if (window.ui && window.ui.getSystem) {
-            clearInterval(interval);
+        formData.append("demo_token", token);
 
-            // Sobrescribir fetch para incluir Authorization
-            const originalFetch = window.fetch;
-            window.fetch = function (url, options = {}) {
-              options.headers = {
-                ...(options.headers || {}),
-                Authorization: `Bearer ${token}`, // inyecta token automáticamente
-              };
-              return originalFetch(url, options);
-            };
+        const res = await fetch(url, { method: "POST", body: formData });
+        if (!res.ok) {
+          const text = await res.text();
+          throw new Error(`Error ${res.status}: ${text}`);
+        }
+        return res.json();
+      }
 
-            console.log("Token de demo inyectado automáticamente en Swagger!");
-          }
-        }, 200);
+      // ⚡ Modal siempre visible
+      window.addEventListener("DOMContentLoaded", () => {
+        // Siempre mostrar modal, aunque haya token
+        document.getElementById("modal").style.display = "flex";
       });
     </script>
   </body>
