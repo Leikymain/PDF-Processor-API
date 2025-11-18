@@ -13,6 +13,7 @@ import io
 import json
 from auth_middleware import require_auth
 from fastapi.openapi.utils import get_openapi
+from fastapi import Header
 
 load_dotenv()
 
@@ -160,8 +161,10 @@ async def auth_check(token: str = Depends(require_auth)):
 async def process_pdf(
     file: UploadFile = File(...),
     document_type: str = Form(default="generic"),
+    authorization:str = Header(None),
     req: Request = None
 ):
+    token = await require_auth(authorization)
     client_ip = "unknown"
     if req:
         forwarded = req.headers.get("x-forwarded-for")
@@ -191,7 +194,8 @@ async def process_pdf(
     )
 
 @app.post("/process/text", dependencies=[Depends(verify_bearer_token)])
-async def process_text(text: str = Form(...), document_type: str = Form(default="generic"), req: Request = None):
+async def process_text(text: str = Form(...), document_type: str = Form(default="generic"), authorization:str = Header(None), req: Request = None):
+    token = await require_auth(authorization)
     client_ip = "unknown"
     if req:
         forwarded = req.headers.get("x-forwarded-for")
