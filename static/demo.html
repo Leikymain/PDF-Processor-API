@@ -21,6 +21,7 @@
         display: flex;
         align-items: center;
         justify-content: center;
+        z-index: 9999;
       }
 
       #modal-box {
@@ -93,44 +94,36 @@
           // Guardar token localmente
           localStorage.setItem("demo_token", token);
 
-          // Guardar temporalmente para inyectar en Swagger
-          sessionStorage.setItem("pending_swagger_token", token);
-
-          // Redirigir a demo/barra2
+          // Redirigir a Swagger Docs
           window.location.href = "/docs";
         } catch (err) {
           document.getElementById("error").style.display = "block";
         }
       }
 
+      // ⚡ Inyección automática del token en Swagger
       window.addEventListener("DOMContentLoaded", () => {
-        const token =
-          sessionStorage.getItem("pending_swagger_token") ||
-          localStorage.getItem("demo_token");
+        const token = localStorage.getItem("demo_token");
         if (!token) return;
 
-        setTimeout(() => {
-          const authorizeBtn = document.querySelector(".authorize");
-          if (!authorizeBtn) return;
+        // Esperamos a que Swagger UI esté inicializado
+        const interval = setInterval(() => {
+          if (window.ui && window.ui.getSystem) {
+            clearInterval(interval);
 
-          authorizeBtn.click();
+            // Sobrescribir fetch para incluir Authorization
+            const originalFetch = window.fetch;
+            window.fetch = function (url, options = {}) {
+              options.headers = {
+                ...(options.headers || {}),
+                Authorization: `Bearer ${token}`, // inyecta token automáticamente
+              };
+              return originalFetch(url, options);
+            };
 
-          setTimeout(() => {
-            const input = document.querySelector("input[type='text']");
-            if (input) {
-              input.value = token;
-              input.dispatchEvent(new Event("input", { bubbles: true }));
-            }
-
-            const modalAuthorizeBtn = document.querySelector(
-              ".btn.modal-btn.auth.authorize"
-            );
-            if (modalAuthorizeBtn) modalAuthorizeBtn.click();
-
-            // Limpiar sessionStorage para no repetir
-            sessionStorage.removeItem("pending_swagger_token");
-          }, 500);
-        }, 500);
+            console.log("Token de demo inyectado automáticamente en Swagger!");
+          }
+        }, 200);
       });
     </script>
   </body>
