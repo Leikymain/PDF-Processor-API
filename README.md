@@ -2,7 +2,12 @@
 
 API que procesa automáticamente PDFs (facturas, CVs, documentos) y extrae datos estructurados usando IA.
 
-**Desarrollado por Jorge Lago Campos** | [LinkedIn](https://www.linkedin.com/in/jorge-lago-campos/)
+## stack
+
+- FastAPI
+- Python
+- PDFMiner
+- OpenAI
 
 ## 🎯 Casos de Uso Reales
 
